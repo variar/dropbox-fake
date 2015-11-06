@@ -7,13 +7,15 @@
 var app = require('../app');
 var debug = require('debug')('dropbox-fake:server');
 var http = require('http');
-
+var https = require('https');
+var fs = require('fs');
 /**
  * Get port from environment and store in Express.
  */
 
 var port = normalizePort(process.env.PORT || '3000');
-app.set('port', port);
+var portS = normalizePort(process.env.PORT_S || '3001');
+//app.set('port', port);
 
 /**
  * Create HTTP server.
@@ -28,6 +30,17 @@ var server = http.createServer(app);
 server.listen(port);
 server.on('error', onError);
 server.on('listening', onListening);
+
+var serverS = https.createServer(
+  {
+    key:fs.readFileSync('./cert/key.pem'),
+    cert:fs.readFileSync('./cert/cert.pem')
+  }, app
+);
+
+serverS.listen(portS);
+serverS.on('error', onError);
+serverS.on('listening', onListening);
 
 /**
  * Normalize a port into a number, string, or false.

@@ -1,60 +1,24 @@
 var express = require('express');
-var router = express.Router();
-
 var fs = require('fs-extra');
 var uuid = require('uuid');
 var moment = require('moment');
 var getFolderSize = require('get-folder-size');
 var path = require('path');
+var Q = require('q');
+
+var router = express.Router();
 
 var paths = require('../paths');
 var user = require('../user');
+var oauth = require('./oauth');
 
 var dateFormat = 'ddd, D MMM YYYY HH:mm:ss ZZ';
 
-var parseOAuthHeader = function(req, res, next) {
-  var oauth = req.header('Authorization');
-  console.log('OAuth: ' + oauth);
-
-  if (!oauth) {
-    return res.sendStatus(403);
-  }
-
-  var oauth = oauth.replace(/OAuth/, '');
-  var oauth = oauth.replace(/\s/g, '');
-  var oauth = oauth.replace(/\"/g, '');
-
-  var parts = oauth.split(',');
-  parts.forEach(function(part) {
-    var keyValue = part.split('=');
-    if (keyValue[0] == 'oauth_token') {
-      req.oauthToken = keyValue[1];
-    } else if (keyValue[0] == 'oauth_signature') {
-      req.oauthSignature = keyValue[1];
-    }
-  });
-
-  return next();
-};
-
-var verifyOAuthSecret = function(req, res, next) {
-  if (!req.oauthSignature || !req.oauthToken) {
-    return res.sendStatus(403);
-  }
-
-  var signatureParts = req.oauthSignature.split('&');
-  console.log("Verify signature", signatureParts[1]);
-  if (signatureParts[1] == req.oauthToken) {
-    return next();
-  } else {
-    console.log('OAuth error, token', req.oauthToken,
-    'signature', req.oauthSignature);
-    res.sendStatus(403);
-  }
-};
+router.use(oauth.parseOAuthHeader);
+router.use(oauth.verifyOAuthSecret);
 
 /* GET home page. */
-router.get('/files/sandbox/*', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.get('/files/sandbox/*', function(req, res, next) {
   console.log('/files/sandbox/', req.params[0]);
 
   var fullPath = paths.getDataPath(req.oauthToken, req.params[0]);
@@ -82,35 +46,37 @@ router.get('/files/sandbox/*', parseOAuthHeader, verifyOAuthSecret, function(req
   });
 });
 
-router.put('/files_put/sandbox/*', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.put('/files_put/sandbox/*', function(req, res, next) {
   console.log('/files_put/sandbox/', req.params[0]);
   var fullPath = paths.getDataPath(req.oauthToken, req.params[0]);
 
   var dir = path.dirname(fullPath);
-  fs.mkdirp(dir, function(err) {
-    if (err) {
-      res.sendStatus(500);
-    } else {
-      var stream = fs.createWriteStream(fullPath);
-      stream.write(req.body, function() {
-        fs.stat(fullPath, function(err, stats) {
-          res.json({
-            bytes: stats.size,
-            path: '/' + req.params[0],
-            modified: moment(stats.mtime).format(dateFormat),
-          });
-        });
-      });
-    }
+  Q.denodeify(fs.mkdirp)(dir)
+  .then(function() {
+    var stream = fs.createWriteStream(fullPath);
+    return Q.nbind(stream.write, stream)(req.body);
+  })
+  .then(function() {
+    return Q.denodeify(fs.stat)(fullPath);
+  })
+  .then(function(stats) {
+    res.json({
+      bytes: stats.size,
+      path: '/' + req.params[0],
+      modified: moment(stats.mtime).format(dateFormat),
+    });
+  })
+  .catch(function(err) {
+    res.sendStatus(500);
   });
 });
 
-router.put('/chunked_upload', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.put('/chunked_upload', function(req, res, next) {
   console.log('/files_put/chunked_upload/', req.query.upload_id, req.query.offset, req.header('Content-Length'));
-  var upload_id = req.query.upload_id;
+  var uploadId = req.query.upload_id;
   var fileMode = 'r+';
-  if (!upload_id) {
-    upload_id = uuid();
+  if (!uploadId) {
+    uploadId = uuid();
     fileMode = 'w';
   }
 
@@ -119,64 +85,74 @@ router.put('/chunked_upload', parseOAuthHeader, verifyOAuthSecret, function(req,
     offset = 0;
   }
 
-  var chunkPath = paths.getChunkPath(req.oauthToken, upload_id);
-  var stream = fs.createWriteStream(chunkPath, {flags: fileMode, defaultEncoding: 'binary', start: Number(offset)});
-  stream.write(req.body, function () {
-    fs.stat(chunkPath, function(err, stats) {
-      console.log('Chunk uploaded', chunkPath, 'total size', stats['size']);
-      res.json({
-        upload_id: upload_id,
-        offset: stats.size,
-        expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
-    });
+  var chunkPath = paths.getChunkPath(req.oauthToken, uploadId);
+  var stream = fs.createWriteStream(chunkPath,
+    {flags: fileMode, defaultEncoding: 'binary', start: Number(offset)});
+
+  Q.nbind(stream.write, stream)(req.body)
+  .then(function() {
+    return Q.denodeify(fs.stat)(chunkPath);
+  })
+  .then(function(stats) {
+    console.log('Chunk uploaded', chunkPath, 'total size', stats.size);
+    res.json({
+      upload_id: uploadId,
+      offset: stats.size,
+      expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
+  })
+  .catch(function(err) {
+    res.status(500).send(err.stack);
   });
 });
 
-router.post('/commit_chunked_upload/sandbox/*', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.post('/commit_chunked_upload/sandbox/*', function(req, res, next) {
   console.log('/commit_chunked_upload/sandbox/', req.params[0], req.body.upload_id);
   if (req.body.upload_id) {
     var chunkPath = paths.getChunkPath(req.oauthToken, req.body.upload_id);
-    var datapath = paths.getDataPath(req.oauthToken, req.params[0]);
+    var dataPath = paths.getDataPath(req.oauthToken, req.params[0]);
 
     var dir = path.dirname(datapath);
-    fs.mkdirp(dir, function(err) {
-      if (err) {
-        res.sendStatus(500);
-      } else {
-        fs.rename(chunkPath, datapath, function(err) {
-          fs.stat(datapath, function(err, stats) {
-            res.json({
-              bytes: stats.size,
-              path: '/' + req.params[0],
-              modified: moment(stats.mtime).format(dateFormat),
-            });
-          });
-        });
-      }
+
+    Q.denodeify(fs.mkdirp)(dir)
+    .then(function() {
+      return Q.denodeify(fs.rename)(chunkPath, dataPath);
+    })
+    .then(function() {
+      return Q.denodeify(fs.stat)(dataPath);
+    })
+    .then(function(stats) {
+      res.json({
+        bytes: stats.size,
+        path: '/' + req.params[0],
+        modified: moment(stats.mtime).format(dateFormat),
+      });
+    })
+    .catch(function(err) {
+      res.status(500).send(err.stack);
     });
   } else {
     res.sendStatus(400);
   }
 });
 
-router.get('/metadata/sandbox/*', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.get('/metadata/sandbox/*', function(req, res, next) {
   console.log('/metadata/sandbox/', req.params[0]);
     var fullPath = paths.getDataPath(req.oauthToken, req.params[0]);
-    fs.stat(fullPath, function(err, stats) {
-      if(err) {
-        res.sendStatus(404);
-      } else {
-        res.json({
-          bytes: stats.size,
-          path: '/' + req.params[0],
-          modified: moment(stats.mtime).utc().format(dateFormat),
-          is_dir: stats.isDirectory()
-        });
-      }
+    Q.denodeify(fs.stat)(fullPath)
+    .then(function (stats) {
+      res.json({
+        bytes: stats.size,
+        path: '/' + req.params[0],
+        modified: moment(stats.mtime).utc().format(dateFormat),
+        is_dir: stats.isDirectory()
+      });
+    })
+    .catch(function(err) {
+      res.sendStatus(404);
     });
 });
 
-router.post('/fileops/create_folder', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.post('/fileops/create_folder', function(req, res, next) {
   console.log('/fileops/create_folder/', req.body.path);
   var fullPath = paths.getDataPath(req.oauthToken, req.body.path);
   fs.mkdirp(fullPath, function(err) {
@@ -193,7 +169,7 @@ router.post('/fileops/create_folder', parseOAuthHeader, verifyOAuthSecret, funct
   });
 });
 
-router.post('/fileops/delete', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.post('/fileops/delete', function(req, res, next) {
   console.log('/fileops/delete/', req.body.path);
   var fullPath = paths.getDataPath(req.oauthToken, req.body.path);
   fs.remove(fullPath, function(err) {
@@ -210,7 +186,7 @@ router.post('/fileops/delete', parseOAuthHeader, verifyOAuthSecret, function(req
   });
 });
 
-router.get('/account/info', parseOAuthHeader, verifyOAuthSecret, function(req, res, next) {
+router.get('/account/info', function(req, res, next) {
   console.log('/account/info');
   getFolderSize(paths.getDataPath(req.oauthToken, ''), function(err, size) {
     if (err) {
@@ -226,7 +202,6 @@ router.get('/account/info', parseOAuthHeader, verifyOAuthSecret, function(req, r
       });
     }
   });
-
 });
 
 module.exports = router;

@@ -5,10 +5,12 @@
  */
 
 var app = require('../app');
+var database = require('../database');
 var debug = require('debug')('dropbox-fake:server');
 var http = require('http');
 var https = require('https');
 var fs = require('fs');
+var Q = require('q');
 /**
  * Get port from environment and store in Express.
  */
@@ -20,27 +22,22 @@ var portS = normalizePort(process.env.PORT_S || '3001');
 /**
  * Create HTTP server.
  */
+database.load().then(function() {
+  console.log('HTTP', port, 'HTTPS', portS);
+  var server = http.createServer(app);
+  server.listen(port);
+  server.on('error', onError);
 
-var server = http.createServer(app);
+  var serverS = https.createServer(
+    {
+      key:fs.readFileSync('./cert/dropbox_fake.key'),
+      cert:fs.readFileSync('./cert/dropbox_fake.crt')
+    }, app
+  );
 
-/**
- * Listen on provided port, on all network interfaces.
- */
-
-server.listen(port);
-server.on('error', onError);
-server.on('listening', onListening);
-
-var serverS = https.createServer(
-  {
-    key:fs.readFileSync('./cert/key.pem'),
-    cert:fs.readFileSync('./cert/cert.pem')
-  }, app
-);
-
-serverS.listen(portS);
-serverS.on('error', onError);
-serverS.on('listening', onListening);
+  serverS.listen(portS);
+  serverS.on('error', onError);
+}).catch(function(err){console.err(err.messages)});
 
 /**
  * Normalize a port into a number, string, or false.
@@ -94,11 +91,3 @@ function onError(error) {
 /**
  * Event listener for HTTP server "listening" event.
  */
-
-function onListening() {
-  var addr = server.address();
-  var bind = typeof addr === 'string'
-    ? 'pipe ' + addr
-    : 'port ' + addr.port;
-  debug('Listening on ' + bind);
-}

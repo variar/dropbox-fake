@@ -1,3 +1,5 @@
+require('dotenv').load();
+
 var express = require('express');
 var path = require('path');
 var logger = require('morgan');
@@ -10,8 +12,6 @@ var files = require('./routes/files');
 
 var app = express();
 
-// uncomment after placing your favicon in /public
-//app.use(favicon(path.join(__dirname, 'public', 'favicon.ico')));
 app.use(logger('dev'));
 app.use(bodyParser.raw({limit: '10mb'}));
 app.use(bodyParser.urlencoded({extended: false}));
@@ -24,7 +24,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/1/oauth', oauth);
 
-app.use('/1', files);
+app.use('/1/', files);
 
 app.use('/', function(req, res, next) {
   res.sendStatus(200);

@@ -16,6 +16,10 @@ var parseOAuthHeader = function(req, res, next) {
   var oauth = req.header('Authorization');
   console.log('OAuth: ' + oauth);
 
+  if (!oauth) {
+    return res.sendStatus(403);
+  }
+
   var oauth = oauth.replace(/OAuth/, '');
   var oauth = oauth.replace(/\s/g, '');
   var oauth = oauth.replace(/\"/g, '');
@@ -34,6 +38,10 @@ var parseOAuthHeader = function(req, res, next) {
 };
 
 var verifyOAuthSecret = function(req, res, next) {
+  if (!req.oauthSignature || !req.oauthToken) {
+    return res.sendStatus(403);
+  }
+
   var signatureParts = req.oauthSignature.split('&');
   console.log("Verify signature", signatureParts[1]);
   if (signatureParts[1] == req.oauthToken) {

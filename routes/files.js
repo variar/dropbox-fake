@@ -1,83 +1,81 @@
 var express = require('express');
-var fs = require('fs-extra');
 var uuid = require('uuid');
-var moment = require('moment');
-var getFolderSize = require('get-folder-size');
-var path = require('path');
 var Q = require('q');
+var range = require('express-range');
 
 var router = express.Router();
 
-var paths = require('../paths');
-var user = require('../user');
-var oauth = require('./oauth');
+var helpers = require('../lib/helpers');
+var fileops = require('../lib/fileops');
 
-var dateFormat = 'ddd, D MMM YYYY HH:mm:ss ZZ';
+var parseRange = range({accept: 'bytes', limit: 1024*1024*1024*100});
 
-router.use(oauth.parseOAuthHeader);
-router.use(oauth.verifyOAuthSecret);
-
-/* GET home page. */
-router.get('/files/sandbox/*', function(req, res, next) {
+var sendFileRange = router.sendFileRange = function(req, res) {
   console.log('/files/sandbox/', req.params[0]);
+  var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
 
-  var fullPath = paths.getDataPath(req.oauthToken, req.params[0]);
-  fs.stat(fullPath, function(err, stats) {
-    if (err) {
-      console.log(err);
-      req.status(500).send(err.stack);
-      return;
-    }
-
-    var fileSize = stats.size;
-    if (fileSize < req.range.last) {
-      req.range.last = fileSize;
-    }
-    res.range({
-         first: req.range.first,
-         last: req.range.last,
-         length: req.range.last - req.range.first
-       });
-
-    console.log('range', req.range);
-    var s = fs.createReadStream(fullPath,
-       {start: req.range.first, end: req.range.last}).pipe(res);
-    s.on('finish', function() {res.end();});
-  });
-});
-
-router.put('/files_put/sandbox/*', function(req, res, next) {
-  console.log('/files_put/sandbox/', req.params[0]);
-  var fullPath = paths.getDataPath(req.oauthToken, req.params[0]);
-
-  var dir = path.dirname(fullPath);
-  Q.denodeify(fs.mkdirp)(dir)
-  .then(function() {
-    var stream = fs.createWriteStream(fullPath);
-    return Q.nbind(stream.write, stream)(req.body);
-  })
-  .then(function() {
-    return Q.denodeify(fs.stat)(fullPath);
+  fileops.readFileRange(fullPath, req.range, res)
+  .then(function(range) {
+    res.range = range;
+    res.range.length = range.last - range.first;
+    return fileops.getFileStats(fullPath);
   })
   .then(function(stats) {
-    res.json({
-      bytes: stats.size,
-      path: '/' + req.params[0],
-      modified: moment(stats.mtime).format(dateFormat),
-    });
+    stats.path = '/' + req.params[0];
+    res.header('x-dropbox-metadata', JSON.stringify(stats));
+    res.end();
   })
   .catch(function(err) {
-    res.sendStatus(500);
+    console.log(err);
+    res.sendStatus(404);
   });
-});
+};
 
-router.put('/chunked_upload', function(req, res, next) {
-  console.log('/files_put/chunked_upload/', req.query.upload_id, req.query.offset, req.header('Content-Length'));
+var recieveFile = router.recieveFile = function(req, res) {
+  console.log('/files_put/sandbox/', req.params[0]);
+
+  if (!req.header('Content-Length')) {
+    console.log('Content-Length not set');
+    return res.sendStatus(411);
+  }
+
+  var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
+
+  fileops.getFileStats(fullPath).then(
+    function(stats) {
+      if (!req.query.overwrite) {
+        res.sendStatus(409);
+        return Q.reject(new Error('file exists'));
+      } else {
+        return Q.resolve();
+      }
+    },
+    function(err) {
+      return Q.resolve();
+    })
+    .then(function() {
+      return fileops.writeData(fullPath, req.body, 0)
+      .then(function(stats) {
+        stats.path = '/' + req.params[0];
+        res.json(stats);
+        return Q.resolve();
+      });
+    })
+    .catch(function(err) {
+      console.log(err);
+      res.sendStatus(500);
+    });
+};
+
+var recieveFileChunk = router.recieveFileChunk = function(req, res) {
+  console.log('/files_put/chunked_upload/',
+              req.query.upload_id,
+              req.query.offset,
+              req.header('Content-Length'));
+
   var uploadId = req.query.upload_id;
-  var fileMode = 'r+';
   if (!uploadId) {
     uploadId = uuid();
-    fileMode = 'w';
   }
 
   var offset = req.query.offset;
@@ -85,123 +83,146 @@ router.put('/chunked_upload', function(req, res, next) {
     offset = 0;
   }
 
-  var chunkPath = paths.getChunkPath(req.oauthToken, uploadId);
-  var stream = fs.createWriteStream(chunkPath,
-    {flags: fileMode, defaultEncoding: 'binary', start: Number(offset)});
-
-  Q.nbind(stream.write, stream)(req.body)
-  .then(function() {
-    return Q.denodeify(fs.stat)(chunkPath);
-  })
-  .then(function(stats) {
-    console.log('Chunk uploaded', chunkPath, 'total size', stats.size);
-    res.json({
-      upload_id: uploadId,
-      offset: stats.size,
-      expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
+  var chunkPath = helpers.getChunkPath(req.oauthHeader.token, uploadId);
+  fileops.getFileStats(chunkPath).then(
+    function(stats) {
+      if (offset != stats.size) {
+        res.status(400).json({
+          upload_id: uploadId,
+          offset: stats.size,
+          expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
+        return Q.reject(new Error('unexpected offset'));
+      }
+      return Q.resolve();
+    },
+    function(err) {
+      if (req.query.upload_id) {
+        res.sendStatus(404);
+        return Q.reject(new Error('unexpected upload_id'));
+      }
+      return Q.resolve();
+    }
+  ).then(function() {
+    return fileops.writeData(chunkPath, req.body, offset)
+    .then(function(stats) {
+      console.log('Chunk uploaded', chunkPath, 'total size', stats.size);
+      res.json({
+        upload_id: uploadId,
+        offset: stats.size,
+        expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
+      return Q.resolve();
+    });
   })
   .catch(function(err) {
-    res.status(500).send(err.stack);
+    console.log(err);
+    res.sendStatus(500);
   });
-});
+};
 
-router.post('/commit_chunked_upload/sandbox/*', function(req, res, next) {
-  console.log('/commit_chunked_upload/sandbox/', req.params[0], req.body.upload_id);
-  if (req.body.upload_id) {
-    var chunkPath = paths.getChunkPath(req.oauthToken, req.body.upload_id);
-    var dataPath = paths.getDataPath(req.oauthToken, req.params[0]);
-
-    var dir = path.dirname(datapath);
-
-    Q.denodeify(fs.mkdirp)(dir)
-    .then(function() {
-      return Q.denodeify(fs.rename)(chunkPath, dataPath);
-    })
-    .then(function() {
-      return Q.denodeify(fs.stat)(dataPath);
-    })
-    .then(function(stats) {
-      res.json({
-        bytes: stats.size,
-        path: '/' + req.params[0],
-        modified: moment(stats.mtime).format(dateFormat),
-      });
-    })
-    .catch(function(err) {
-      res.status(500).send(err.stack);
-    });
-  } else {
-    res.sendStatus(400);
+var commitFileChunks = router.commitFileChunks = function(req, res) {
+  if (!req.body.upload_id) {
+    return res.sendStatus(400);
   }
-});
+  var chunkPath = helpers.getChunkPath(
+    req.oauthHeader.token,
+    req.body.upload_id);
 
-router.get('/metadata/sandbox/*', function(req, res, next) {
-  console.log('/metadata/sandbox/', req.params[0]);
-    var fullPath = paths.getDataPath(req.oauthToken, req.params[0]);
-    Q.denodeify(fs.stat)(fullPath)
-    .then(function (stats) {
-      res.json({
-        bytes: stats.size,
-        path: '/' + req.params[0],
-        modified: moment(stats.mtime).utc().format(dateFormat),
-        is_dir: stats.isDirectory()
-      });
-    })
-    .catch(function(err) {
-      res.sendStatus(404);
+  fileops.getFileStats(chunkPath)
+  .fail(function(err) {
+    res.sendStatus(400);
+    return Q.reject(new Error('no upload with such id'));
+  })
+  .then(function() {
+    var dataPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
+    return fileops.renameFile(chunkPath, dataPath)
+    .then(function(stats) {
+      stats.path = '/' + req.params[0];
+      res.json(stats);
+      return Q.resolve();
     });
-});
-
-router.post('/fileops/create_folder', function(req, res, next) {
-  console.log('/fileops/create_folder/', req.body.path);
-  var fullPath = paths.getDataPath(req.oauthToken, req.body.path);
-  fs.mkdirp(fullPath, function(err) {
-    if (err) {
-      res.sendStatus(403);
-    } else {
-      res.json({
-        bytes: 0,
-        path: '/' + req.body.path,
-        modified: moment().utc().format(dateFormat),
-        is_dir: true
-      });
-    }
+  })
+  .catch(function(err) {
+    console.log(err);
+    res.sendStatus(500);
   });
-});
+};
 
-router.post('/fileops/delete', function(req, res, next) {
-  console.log('/fileops/delete/', req.body.path);
-  var fullPath = paths.getDataPath(req.oauthToken, req.body.path);
-  fs.remove(fullPath, function(err) {
-    if (err) {
-      res.sendStatus(403);
-    } else {
-      res.json({
-        bytes: 0,
-        path: '/' + req.body.path,
-        modified: moment().utc().format(dateFormat),
-        is_deleted: true
-      });
-    }
+var getMetadata = router.getMetadata = function(req, res) {
+  console.log('/metadata/sandbox/', req.params[0]);
+  var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
+
+  fileops.getFileStats(fullPath)
+  .then(function(stats) {
+    stats.path = '/' + req.params[0];
+    res.json(stats);
+    return Q.resolve();
+  })
+  .catch(function(err) {
+    res.sendStatus(404);
   });
-});
+};
 
-router.get('/account/info', function(req, res, next) {
+var createFolder = router.createFolder = function(req, res) {
+  console.log('/fileops/create_folder/', req.body.root, req.body.path);
+
+  if (req.body.root != 'sandbox') {
+    return res.sendStatus(403);
+  }
+
+  var fullPath = helpers.getDataPath(req.oauthHeader.token, req.body.path);
+  fileops.ensureDirectory(fullPath)
+  .then(function(stats) {
+    stats.path = '/' + req.body.path;
+    res.json(stats);
+    return Q.resolve();
+  })
+  .catch(function(err) {res.sendStatus(403);});
+};
+
+var removeObject = router.removeObject = function(req, res) {
+  console.log('/fileops/delete/', req.body.root, req.body.path);
+
+  if (req.body.root != 'sandbox') {
+    return res.sendStatus(403);
+  }
+
+  var fullPath = helpers.getDataPath(req.oauthHeader.token, req.body.path);
+  fileops.remove(fullPath)
+  .then(function(stats) {
+    stats.path = '/' + req.body.path;
+    res.json(stats);
+    return Q.resolve();
+  })
+  .catch(function(err) {res.sendStatus(404);});
+};
+
+var getAccountInfo = router.getAccountInfo = function(req, res) {
   console.log('/account/info');
-  getFolderSize(paths.getDataPath(req.oauthToken, ''), function(err, size) {
-    if (err) {
-      res.status(500).send(err.stack);
-    } else {
-      res.json({
-        uid: user.getUserId(req.oauthToken),
-        quota_info: {
-          shared: 0,
-          quota: 2*1024*1024*1024,
-          normal: size
-        }
-      });
-    }
+  fileops.getFolderSize(helpers.getDataPath(req.oauthHeader.token, ''))
+  .then(function(size) {
+    res.json({
+      uid: helpers.getUserId(req.oauthToken),
+      quota_info: {
+        shared: 0,
+        quota: 2*1024*1024*1024,
+        normal: size
+      }
+    });
+    return Q.resolve();
+  })
+  .catch(function(err) {
+    console.log(err);
+    res.sendStatus(500);
   });
-});
+};
+
+router.get('/files/sandbox/*', parseRange, sendFileRange);
+router.put('/files_put/sandbox/*', recieveFile);
+router.put('/chunked_upload', recieveFileChunk);
+router.post('/commit_chunked_upload/sandbox/*', commitFileChunks);
+router.get('/metadata/sandbox/*', getMetadata);
+router.post('/fileops/create_folder', createFolder);
+router.post('/fileops/delete', removeObject);
+router.get('/account/info', getAccountInfo);
 
 module.exports = router;

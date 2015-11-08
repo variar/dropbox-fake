@@ -6,9 +6,9 @@
     "start": "node ./bin/www",
     "test": "npm run test-unit && npm run test-rest",
     "test-unit": "./node_modules/mocha/bin/mocha",
-    "test-rest": "node ./test/test_all.js",
-    "test-http": "node ./test/test_http.js",
-    "test-https": "node ./test/test_https.js"
+    "test-rest": "npm run test-http && npm run test-https",
+    "test-http": "node ./test-rest/test_http.js",
+    "test-https": "node ./test-rest/test_https.js"
   },
   "dependencies": {
     "body-parser": "~1.13.2",

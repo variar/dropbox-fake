@@ -356,6 +356,8 @@ var deleteChunksFolder = function(accessToken) {
 module.exports.runTestSequence = function(url) {
   serverUrl = url;
 
+  console.log('Running test sequence for server at', serverUrl);
+
   return getRequestToken()
   .then(authorizeRequestToken)
   .then(getAccessToken)

@@ -29,6 +29,7 @@ node_modules
 
 #data for app
 data
+chunk
 
 #data for test
 test/test_db.json

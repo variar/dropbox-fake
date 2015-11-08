@@ -1,29 +1,56 @@
 var express = require('express');
 var uuid = require('uuid');
+var contentRange = require('content-range');
 var Q = require('q');
-var range = require('express-range');
 
 var router = express.Router();
 
 var helpers = require('../lib/helpers');
 var fileops = require('../lib/fileops');
 
-var parseRange = range({accept: 'bytes', limit: 1024*1024*1024*100});
+var parseRangeHeader = function(req, res, next) {
+  var rangeHeader = req.header('content-range');
+  if (rangeHeader) {
+    res.status(206);
+    req.rangeHeader = contentRange.parse(rangeHeader);
+
+    console.log('Found range', rangeHeader, req.rangeHeader);
+  }
+  next();
+};
 
 var sendFileRange = router.sendFileRange = function(req, res) {
-  console.log('/files/sandbox/', req.params[0]);
+  console.log('/files/sandbox/', req.params[0], req.rangeHeader);
   var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
 
-  fileops.readFileRange(fullPath, req.range, res)
-  .then(function(range) {
-    res.range = range;
-    res.range.length = range.last - range.first;
-    return fileops.getFileStats(fullPath);
-  })
+  if (!req.rangeHeader) {
+    req.rangeHeader = {name: 'bytes', start: 0, end: Number.MAX_VALUE};
+  }
+
+  fileops.getFileStats(fullPath)
   .then(function(stats) {
     stats.path = '/' + req.params[0];
     res.header('x-dropbox-metadata', JSON.stringify(stats));
+
+    if (stats.bytes < req.rangeHeader.end) {
+      req.rangeHeader.end = stats.bytes;
+    }
+    req.rangeHeader.length = stats.bytes;
+
+    res.header('Content-Length', req.rangeHeader.end - req.rangeHeader.start);
+
+    if (res.status == 206) {
+      var resRangeHeader = 'bytes ' + req.rangeHeader.start +
+                            '-' + req.rangeHeader.end + '/' +
+                            req.rangeHeader.length;
+
+      res.header('content-range', resRangeHeader);
+    }
+    return fileops.readFileRange(fullPath, req.rangeHeader, res);
+  })
+  .then(function() {
     res.end();
+    return Q.resolve();
   })
   .catch(function(err) {
     console.log(err);
@@ -43,7 +70,7 @@ var recieveFile = router.recieveFile = function(req, res) {
 
   fileops.getFileStats(fullPath).then(
     function(stats) {
-      if (!req.query.overwrite) {
+      if (req.query.overwrite === 'false') {
         res.sendStatus(409);
         return Q.reject(new Error('file exists'));
       } else {
@@ -86,10 +113,10 @@ var recieveFileChunk = router.recieveFileChunk = function(req, res) {
   var chunkPath = helpers.getChunkPath(req.oauthHeader.token, uploadId);
   fileops.getFileStats(chunkPath).then(
     function(stats) {
-      if (offset != stats.size) {
+      if (offset != stats.bytes) {
         res.status(400).json({
           upload_id: uploadId,
-          offset: stats.size,
+          offset: stats.bytes,
           expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
         return Q.reject(new Error('unexpected offset'));
       }
@@ -105,10 +132,10 @@ var recieveFileChunk = router.recieveFileChunk = function(req, res) {
   ).then(function() {
     return fileops.writeData(chunkPath, req.body, offset)
     .then(function(stats) {
-      console.log('Chunk uploaded', chunkPath, 'total size', stats.size);
+      console.log('Chunk uploaded', chunkPath, 'total size', stats.bytes);
       res.json({
         upload_id: uploadId,
-        offset: stats.size,
+        offset: stats.bytes,
         expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
       return Q.resolve();
     });
@@ -142,14 +169,16 @@ var commitFileChunks = router.commitFileChunks = function(req, res) {
     });
   })
   .catch(function(err) {
-    console.log(err);
+    console.log(err, err.stack);
     res.sendStatus(500);
   });
 };
 
 var getMetadata = router.getMetadata = function(req, res) {
   console.log('/metadata/sandbox/', req.params[0]);
+
   var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
+  console.log(fullPath);
 
   fileops.getFileStats(fullPath)
   .then(function(stats) {
@@ -158,6 +187,7 @@ var getMetadata = router.getMetadata = function(req, res) {
     return Q.resolve();
   })
   .catch(function(err) {
+    console.log(err);
     res.sendStatus(404);
   });
 };
@@ -201,22 +231,26 @@ var getAccountInfo = router.getAccountInfo = function(req, res) {
   fileops.getFolderSize(helpers.getDataPath(req.oauthHeader.token, ''))
   .then(function(size) {
     res.json({
-      uid: helpers.getUserId(req.oauthToken),
+      uid: helpers.getUserId(req.oauthHeader.token),
       quota_info: {
         shared: 0,
-        quota: 2*1024*1024*1024,
+        quota: 2 * 1024 * 1024 * 1024, //2Gb
         normal: size
       }
     });
     return Q.resolve();
   })
   .catch(function(err) {
-    console.log(err);
+    console.log(err, err.stack);
     res.sendStatus(500);
   });
 };
 
-router.get('/files/sandbox/*', parseRange, sendFileRange);
+var authorization = require('./authorization');
+router.use(authorization.parseOAuthHeader);
+router.use(authorization.verifyOAuthSecret);
+
+router.get('/files/sandbox/*', parseRangeHeader, sendFileRange);
 router.put('/files_put/sandbox/*', recieveFile);
 router.put('/chunked_upload', recieveFileChunk);
 router.post('/commit_chunked_upload/sandbox/*', commitFileChunks);

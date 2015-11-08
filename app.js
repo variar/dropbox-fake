@@ -18,11 +18,7 @@ var authorization = require('./routes/authorization');
 var files = require('./routes/files');
 
 app.use('/1/oauth', authorization);
-
-files.use(authorization.parseOAuthHeader);
-files.use(authorization.verifyOAuthSecret);
 app.use('/1/', files);
-
 app.use('/', function(req, res, next) {
   res.sendStatus(200);
 });

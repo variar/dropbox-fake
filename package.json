@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node ./bin/www",
-    "test": "npm run test-unit && npm run test-rest",
+    "test": "npm run test-rest",
     "test-unit": "./node_modules/mocha/bin/mocha",
     "test-rest": "npm run test-http && npm run test-https",
     "test-http": "node ./test-rest/test_http.js",

@@ -350,8 +350,20 @@ var deleteFolder = function(accessToken) {
 };
 
 var deleteChunksFolder = function(accessToken) {
-  return Q.nfcall(fs.remove, helpers.getChunkPath(accessToken.oauth_token, ''));
+  console.log('Removing chunks');
+  return Q.nfcall(fs.remove, helpers.getChunkPath(accessToken.oauth_token, ''))
+  .then(function() {
+    return Q.resolve(accessToken);
+  });
 }
+
+var deleteDataFolder = function(accessToken) {
+  console.log('Removing data');
+  return Q.nfcall(fs.remove, helpers.getDataPath(accessToken.oauth_token, ''))
+  .then(function() {
+    return Q.resolve(accessToken);
+  });
+};
 
 module.exports.runTestSequence = function(url) {
   serverUrl = url;
@@ -375,6 +387,6 @@ module.exports.runTestSequence = function(url) {
   .then(getPartFile)
   .then(deleteFile)
   .then(deleteFileNotExists)
-  .then(deleteFolder)
+  .then(deleteDataFolder)
   .then(deleteChunksFolder);
 };

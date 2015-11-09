@@ -3,6 +3,7 @@ var Q = require('q');
 
 var helpers = require('../lib/helpers');
 var oauth = require('../lib/oauth');
+var httpError = require('../lib/http-error');
 
 var router = express.Router();
 
@@ -29,11 +30,12 @@ router.verifyOAuthSecret = function(req, res, next) {
     }
   },
   function(err) {
-    res.sendStatus(400);
+    err.status = 400;
+    next(err);
   });
 };
 
-router.issueRequestToken = function(req, res) {
+router.issueRequestToken = function(req, res, next) {
   oauth.issueRequestToken().then(function(requestToken) {
     var response = [];
     response.push('oauth_token_secret=' + requestToken.secret);
@@ -41,25 +43,25 @@ router.issueRequestToken = function(req, res) {
     res.send(response.join('&'));
   })
   .catch(function(err) {
-    console.log(err, err.stack);
-    res.sendStatus(500);
+    next(err);
   });
 };
 
-router.authorize = function(req, res) {
+router.authorize = function(req, res, next) {
   oauth.authorizeRequestToken(req.query.oauth_token, true)
   .then(function() {
     return res.sendStatus(200);
   },
   function(err) {
-    return res.sendStatus(400);
+    err.status = 400;
+    next(err);
   })
   .catch(function(err) {
-    throw err;
+    next(err);
   });
 };
 
-router.getAccessToken = function(req, res) {
+router.getAccessToken = function(req, res, next) {
   var response = [];
   oauth.getAccessToken(req.oauthHeader.token)
   .then(function(accessToken) {
@@ -72,8 +74,8 @@ router.getAccessToken = function(req, res) {
     res.send(response.join('&'));
   })
   .catch(function(err) {
-    console.log(err, err.stack);
-    res.sendStatus(403);
+    err.status = 403;
+    next(err);
   });
 };
 

@@ -32,8 +32,9 @@ app.use(function(req, res, next) {
 
 // error handlers
 app.use(function(err, req, res, next) {
-  console.log(err);
-  res.status(err.status || 500).send(err.stack);
+  console.error(err);
+  console.error(err.stack);
+  res.sendStatus(err.status || 500);
 });
 
 module.exports = app;

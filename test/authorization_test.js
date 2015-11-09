@@ -6,6 +6,14 @@ var sinon = require('sinon');
 var oauth = require('../lib/oauth');
 var helpers = require('../lib/helpers');
 
+var checkError = function(expectedStatus, done) {
+  return function(err) {
+    var status = err.status || 500;
+    expect(status).to.be.equal(expectedStatus);
+    done();
+  };
+};
+
 describe('Authorization', function() {
   var requestToken = {token: '123', secret: '456'};
   var sandbox = sinon.sandbox.create();
@@ -32,7 +40,7 @@ describe('Authorization', function() {
           done();
         };
 
-        authorization.issueRequestToken({}, res);
+        authorization.issueRequestToken({}, res, done);
       });
     });
 
@@ -64,7 +72,7 @@ describe('Authorization', function() {
               done();
             }
           };
-          authorization.authorize(req, res);
+          authorization.authorize(req, res, done);
         });
       });
 
@@ -76,14 +84,11 @@ describe('Authorization', function() {
             }
           };
 
-          var res = {
-            sendStatus: function(status) {
-              expect(status).to.equal(400);
-              expect(oauth.authorizeRequestToken.calledOnce).to.be.true;
-              done();
-            }
-          };
-          authorization.authorize(req, res);
+          authorization.authorize(req, {}, function(err) {
+            expect(err.status).to.equal(400);
+            expect(oauth.authorizeRequestToken.calledOnce).to.be.true;
+            done();
+          });
         });
       });
     });
@@ -126,7 +131,7 @@ describe('Authorization', function() {
               done();
             }
           };
-          authorization.getAccessToken(req, res);
+          authorization.getAccessToken(req, res, done);
         });
       });
 
@@ -147,15 +152,12 @@ describe('Authorization', function() {
             }
           };
 
-          var res = {
-            sendStatus: function(status) {
-              expect(status).to.equal(403);
-              expect(oauth.getAccessToken.calledOnce).to.be.true;
-              expect(helpers.createUserPaths.called).to.be.not.true;
-              done();
-            }
-          };
-          authorization.getAccessToken(req, res);
+          authorization.getAccessToken(req, {}, function(err) {
+            expect(err.status).to.equal(403);
+            expect(oauth.getAccessToken.calledOnce).to.be.true;
+            expect(helpers.createUserPaths.called).to.be.not.true;
+            done();
+          });
         });
       });
 
@@ -176,15 +178,12 @@ describe('Authorization', function() {
             }
           };
 
-          var res = {
-            sendStatus: function(status) {
-              expect(status).to.equal(403);
-              expect(oauth.getAccessToken.calledOnce).to.be.true;
-              expect(helpers.createUserPaths.calledOnce).to.be.true;
-              done();
-            }
-          };
-          authorization.getAccessToken(req, res);
+          authorization.getAccessToken(req, {}, function(err) {
+            expect(err.status).to.equal(403);
+            expect(oauth.getAccessToken.calledOnce).to.be.true;
+            expect(helpers.createUserPaths.calledOnce).to.be.true;
+            done();
+          });
         });
       });
     });
@@ -245,7 +244,7 @@ describe('Authorization', function() {
           authorization.verifyOAuthSecret(req, {}, function() {
             expect(oauth.verifyOAuthSignature.calledOnce).to.be.true;
             done();
-          });
+          }, done);
         });
       });
 
@@ -333,7 +332,7 @@ describe('Authorization', function() {
             }
           };
 
-          authorization.verifyOAuthSecret(req, res);
+          authorization.verifyOAuthSecret(req, res, checkError(400, done));
         });
       });
 

@@ -19,7 +19,7 @@ var parseRangeHeader = function(req, res, next) {
   next();
 };
 
-var sendFileRange = router.sendFileRange = function(req, res) {
+var sendFileRange = router.sendFileRange = function(req, res, next) {
   console.log('/files/sandbox/', req.params[0], req.rangeHeader);
   var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
 
@@ -55,12 +55,12 @@ var sendFileRange = router.sendFileRange = function(req, res) {
     return Q.resolve();
   })
   .catch(function(err) {
-    console.log(err);
-    res.sendStatus(404);
+    err.status = 404;
+    next(err);
   });
 };
 
-var recieveFile = router.recieveFile = function(req, res) {
+var recieveFile = router.recieveFile = function(req, res, next) {
   console.log('/files_put/sandbox/', req.params[0]);
 
   if (!req.header('Content-Length')) {
@@ -90,13 +90,10 @@ var recieveFile = router.recieveFile = function(req, res) {
         return Q.resolve();
       });
     })
-    .catch(function(err) {
-      console.log(err);
-      res.sendStatus(500);
-    });
+    .catch(next);
 };
 
-var recieveFileChunk = router.recieveFileChunk = function(req, res) {
+var recieveFileChunk = router.recieveFileChunk = function(req, res, next) {
   console.log('/files_put/chunked_upload/',
               req.query.upload_id,
               req.query.offset,
@@ -126,8 +123,8 @@ var recieveFileChunk = router.recieveFileChunk = function(req, res) {
     },
     function(err) {
       if (req.query.upload_id) {
-        res.sendStatus(404);
-        return Q.reject(new Error('unexpected upload_id'));
+        return Q.reject(
+          httpError('unexpected upload_id'+req.query.upload_id, 404));
       }
       return Q.resolve();
     }
@@ -142,13 +139,10 @@ var recieveFileChunk = router.recieveFileChunk = function(req, res) {
       return Q.resolve();
     });
   })
-  .catch(function(err) {
-    console.log(err);
-    res.sendStatus(500);
-  });
+  .catch(next);
 };
 
-var commitFileChunks = router.commitFileChunks = function(req, res) {
+var commitFileChunks = router.commitFileChunks = function(req, res, next) {
   if (!req.body.upload_id) {
     return res.sendStatus(400);
   }
@@ -158,8 +152,8 @@ var commitFileChunks = router.commitFileChunks = function(req, res) {
 
   fileops.getFileStats(chunkPath)
   .fail(function(err) {
-    res.sendStatus(400);
-    return Q.reject(new Error('no upload with such id'));
+    return Q.reject(
+      httpError('no upload with such id' + req.body.upload_id, 400));
   })
   .then(function() {
     var dataPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
@@ -170,13 +164,10 @@ var commitFileChunks = router.commitFileChunks = function(req, res) {
       return Q.resolve();
     });
   })
-  .catch(function(err) {
-    console.log(err, err.stack);
-    res.sendStatus(500);
-  });
+  .catch(next);
 };
 
-var getMetadata = router.getMetadata = function(req, res) {
+var getMetadata = router.getMetadata = function(req, res, next) {
   console.log('/metadata/sandbox/', req.params[0]);
 
   var fullPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
@@ -189,12 +180,12 @@ var getMetadata = router.getMetadata = function(req, res) {
     return Q.resolve();
   })
   .catch(function(err) {
-    console.log(err);
-    res.sendStatus(404);
+    err.status = 404;
+    next(err);
   });
 };
 
-var createFolder = router.createFolder = function(req, res) {
+var createFolder = router.createFolder = function(req, res, next) {
   console.log('/fileops/create_folder/', req.body.root, req.body.path);
 
   if (req.body.root != 'sandbox') {
@@ -208,10 +199,13 @@ var createFolder = router.createFolder = function(req, res) {
     res.json(stats);
     return Q.resolve();
   })
-  .catch(function(err) {res.sendStatus(403);});
+  .catch(function(err) {
+    err.status = 403;
+    next(err);
+  });
 };
 
-var removeObject = router.removeObject = function(req, res) {
+var removeObject = router.removeObject = function(req, res, next) {
   console.log('/fileops/delete/', req.body.root, req.body.path);
 
   if (req.body.root != 'sandbox') {
@@ -225,10 +219,13 @@ var removeObject = router.removeObject = function(req, res) {
     res.json(stats);
     return Q.resolve();
   })
-  .catch(function(err) {res.sendStatus(404);});
+  .catch(function(err) {
+    err.status = 404;
+    next(err);
+  });
 };
 
-var getAccountInfo = router.getAccountInfo = function(req, res) {
+var getAccountInfo = router.getAccountInfo = function(req, res, next) {
   console.log('/account/info');
   fileops.getFolderSize(helpers.getDataPath(req.oauthHeader.token, ''))
   .then(function(size) {
@@ -242,10 +239,7 @@ var getAccountInfo = router.getAccountInfo = function(req, res) {
     });
     return Q.resolve();
   })
-  .catch(function(err) {
-    console.log(err, err.stack);
-    res.sendStatus(500);
-  });
+  .catch(next);
 };
 
 var authorization = require('./authorization');

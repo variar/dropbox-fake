@@ -1,6 +1,6 @@
 var express = require('express');
 var uuid = require('uuid');
-var contentRange = require('content-range');
+var parseRange = require('range-parser');
 var Q = require('q');
 
 var router = express.Router();
@@ -9,12 +9,12 @@ var helpers = require('../lib/helpers');
 var fileops = require('../lib/fileops');
 
 var parseRangeHeader = function(req, res, next) {
-  var rangeHeader = req.header('content-range');
+  var rangeHeader = req.header('Range');
   if (rangeHeader) {
+    console.log('Found range', rangeHeader);
     res.status(206);
-    req.rangeHeader = contentRange.parse(rangeHeader);
-
-    console.log('Found range', rangeHeader, req.rangeHeader);
+    req.rangeHeader = parseRange(2*1024*1024*1024/*2Gb*/,rangeHeader)[0];
+    console.log('Paresed range', req.rangeHeader);
   }
   next();
 };
@@ -40,12 +40,14 @@ var sendFileRange = router.sendFileRange = function(req, res) {
     res.header('Content-Length', req.rangeHeader.end - req.rangeHeader.start);
 
     if (res.status == 206) {
-      var resRangeHeader = 'bytes ' + req.rangeHeader.start +
+      var resRangeHeader = 'bytes=' + req.rangeHeader.start +
                             '-' + req.rangeHeader.end + '/' +
                             req.rangeHeader.length;
 
-      res.header('content-range', resRangeHeader);
+      res.header('Range', resRangeHeader);
     }
+
+    console.log('Sending range', req.rangeHeader);
     return fileops.readFileRange(fullPath, req.rangeHeader, res);
   })
   .then(function() {

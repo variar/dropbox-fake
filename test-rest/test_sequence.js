@@ -272,7 +272,7 @@ var getPartFile = function(accessToken) {
   var query = querystring.stringify({root: 'sandbox', path:'new_folder'});
   unirest.get(serverUrl + '/1/files/sandbox/full_test/large_file')
   .header('Authorization', makeAuthorizationHeader(accessToken))
-  .header('content-range', 'bytes 5-10/*')
+  .header('Range', 'bytes=5-10/*')
   .end(function(response) {
     console.log(response.request.path, response.status);
     if (response.status == 206) {

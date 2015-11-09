@@ -79,7 +79,7 @@ router.getAccessToken = function(req, res) {
 
 router.post('/request_token', router.issueRequestToken);
 router.get('/authorize', router.authorize);
-router.post('/access_token',
+router.all('/access_token',
   router.parseOAuthHeader,
   router.verifyOAuthSecret,
   router.getAccessToken

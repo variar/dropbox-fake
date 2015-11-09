@@ -1,6 +1,6 @@
 {
   "name": "dropbox-fake",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "node ./bin/www",
@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "body-parser": "~1.13.2",
-    "content-range": "^0.2.0",
     "cookie-parser": "~1.3.5",
     "crc": "^3.3.0",
     "debug": "~2.2.0",
@@ -25,6 +24,7 @@
     "morgan": "^1.6.1",
     "q": "^1.4.1",
     "randomstring": "^1.1.3",
+    "range-parser": "^1.0.3",
     "uuid": "^2.0.1"
   },
   "devDependencies": {
@@ -32,6 +32,7 @@
     "mocha": "^2.3.3",
     "rewire": "^2.4.0",
     "sinon": "^1.17.2",
+    "supertest": "^1.1.0",
     "unirest": "^0.4.2"
   }
 }

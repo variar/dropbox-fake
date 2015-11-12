@@ -2,13 +2,18 @@ require('dotenv').load();
 
 var express = require('express');
 var path = require('path');
-var logger = require('morgan');
+var morgan = require('morgan');
 var cookieParser = require('cookie-parser');
 var bodyParser = require('body-parser');
 
 var app = express();
 
-app.use(logger('dev'));
+app.use(morgan('dev', {
+  'stream': {
+    write: function(str) { console.info(str); }
+  }
+}));
+
 app.use(bodyParser.raw({limit: '10mb'}));
 app.use(bodyParser.urlencoded({extended: false}));
 app.use(cookieParser());
@@ -33,8 +38,12 @@ app.use(function(req, res, next) {
 // error handlers
 app.use(function(err, req, res, next) {
   console.error(err);
-  console.error(err.stack);
-  res.sendStatus(err.status || 500);
+  res.status(err.status || 500);
+  if (err.res) {
+    res.json(res);
+  } else {
+    res.end();
+  }
 });
 
 module.exports = app;

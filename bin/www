@@ -1,55 +1,41 @@
 #!/usr/bin/env node
+require('dotenv').load();
 
-/**
- * Module dependencies.
- */
+var logger = require('../lib/logger');
 
 var app = require('../app');
 var database = require('../lib/database');
 var debug = require('debug')('dropbox-fake:server');
 var http = require('http');
 var https = require('https');
-var fs = require('fs');
+var fs = require('fs-extra');
 var Q = require('q');
-/**
- * Get port from environment and store in Express.
- */
 
-var port = normalizePort(process.env.PORT || '3000');
-var portS = normalizePort(process.env.PORT_S || '3001');
-//app.set('port', port);
+var httpPort = normalizePort(process.env.PORT || '3000');
+var httpsPort = normalizePort(process.env.PORT_S || '3001');
+app.set('httpPort', httpPort);
+app.set('httpsPort', httpsPort);
 
-/**
- * Create HTTP server.
- */
 database.load().then(function() {
-  console.log('HTTP', port, 'HTTPS', portS);
+  console.info('HTTP', httpPort, 'HTTPS', httpsPort);
   var server = http.createServer(app);
-  server.listen(port);
-  server.on('error', onError);
+  server.listen(httpPort);
+  server.on('error', onError(httpPort));
 
-  var serverS = https.createServer(
-    {
-      key:fs.readFileSync('./cert/dropbox_fake.key'),
-      cert:fs.readFileSync('./cert/dropbox_fake.crt')
-    }, app
-  );
+  var keys = { key:fs.readFileSync('./cert/dropbox_fake.key'),
+    cert:fs.readFileSync('./cert/dropbox_fake.crt')
+  };
+  var serverS = https.createServer(keys, app);
 
-  serverS.listen(portS);
-  serverS.on('error', onError);
-}).catch(function(err){console.err(err.messages)});
-
-/**
- * Normalize a port into a number, string, or false.
- */
+  serverS.listen(httpsPort);
+  serverS.on('error', onError(httpsPort));
+})
+.catch(function(err) {
+  console.error(err);
+});
 
 function normalizePort(val) {
   var port = parseInt(val, 10);
-
-  if (isNaN(port)) {
-    // named pipe
-    return val;
-  }
 
   if (port >= 0) {
     // port number
@@ -59,31 +45,27 @@ function normalizePort(val) {
   return false;
 }
 
-/**
- * Event listener for HTTP server "error" event.
- */
-
-function onError(error) {
-  console.log(error);
-  if (error.syscall !== 'listen') {
-    throw error;
-  }
-
-  var bind = typeof port === 'string'
-    ? 'Pipe ' + port
-    : 'Port ' + port;
-
-  // handle specific listen errors with friendly messages
-  switch (error.code) {
-    case 'EACCES':
-      console.error(bind + ' requires elevated privileges');
-      process.exit(1);
-      break;
-    case 'EADDRINUSE':
-      console.error(bind + ' is already in use');
-      process.exit(1);
-      break;
-    default:
+function onError(port) {
+  return function(error) {
+    console.error(error);
+    if (error.syscall !== 'listen') {
       throw error;
-  }
+    }
+
+    var bind = 'Port ' + port;
+
+    // handle specific listen errors with friendly messages
+    switch (error.code) {
+      case 'EACCES':
+        console.error(bind + ' requires elevated privileges');
+        process.exit(1);
+        break;
+      case 'EADDRINUSE':
+        console.error(bind + ' is already in use');
+        process.exit(1);
+        break;
+      default:
+        throw error;
+    }
+  };
 }

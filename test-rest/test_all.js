@@ -17,8 +17,10 @@ test.runTestSequence(httpsServerUrl)
   },
   function(err) {
     console.log('Http test failed', err);
+    process.exit(1);
   }
 )
 .catch(function(err) {
   console.log('Https test failed', err);
+  process.exit(1);
 });

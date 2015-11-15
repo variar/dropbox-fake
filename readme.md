@@ -1,5 +1,7 @@
 # Dropbox Fake
 
+[![Build Status](https://travis-ci.org/variar/dropbox-fake.svg)](https://travis-ci.org/variar/dropbox-fake)
+
 Заглушка, реализующая подмножество Dropbox REST API v1, достаточное для
 работы простых программ резервного копирования.
 

@@ -2,6 +2,7 @@ var express = require('express');
 var uuid = require('uuid');
 var parseRange = require('range-parser');
 var Q = require('q');
+var httpError = require('../lib/http-error');
 
 var router = express.Router();
 
@@ -73,8 +74,7 @@ var recieveFile = router.recieveFile = function(req, res, next) {
   fileops.getFileStats(fullPath).then(
     function(stats) {
       if (req.query.overwrite === 'false') {
-        res.sendStatus(409);
-        return Q.reject(new Error('file exists'));
+        return Q.reject(httpError.makeError('file exists', 409));
       } else {
         return Q.resolve();
       }
@@ -113,18 +113,18 @@ var recieveFileChunk = router.recieveFileChunk = function(req, res, next) {
   fileops.getFileStats(chunkPath).then(
     function(stats) {
       if (offset != stats.bytes) {
-        res.status(400).json({
+        return Q.reject(httpError.makeError('unexpected offset', 400, {
           upload_id: uploadId,
           offset: stats.bytes,
-          expires: 'Tue, 19 Jul 2021 21:55:38 +0000'});
-        return Q.reject(new Error('unexpected offset'));
+          expires: 'Tue, 19 Jul 2021 21:55:38 +0000'
+        }));
       }
       return Q.resolve();
     },
     function(err) {
       if (req.query.upload_id) {
         return Q.reject(
-          httpError('unexpected upload_id'+req.query.upload_id, 404));
+          httpError.makeError('unexpected upload_id'+req.query.upload_id, 404));
       }
       return Q.resolve();
     }
@@ -153,7 +153,7 @@ var commitFileChunks = router.commitFileChunks = function(req, res, next) {
   fileops.getFileStats(chunkPath)
   .fail(function(err) {
     return Q.reject(
-      httpError('no upload with such id' + req.body.upload_id, 400));
+      httpError.makeError('no upload with such id' + req.body.upload_id, 400));
   })
   .then(function() {
     var dataPath = helpers.getDataPath(req.oauthHeader.token, req.params[0]);
@@ -189,7 +189,7 @@ var createFolder = router.createFolder = function(req, res, next) {
   console.log('/fileops/create_folder/', req.body.root, req.body.path);
 
   if (req.body.root != 'sandbox') {
-    return res.sendStatus(403);
+    next(httpError.makeError('usupported root ' + req.body.root, 403));
   }
 
   var fullPath = helpers.getDataPath(req.oauthHeader.token, req.body.path);
@@ -209,7 +209,7 @@ var removeObject = router.removeObject = function(req, res, next) {
   console.log('/fileops/delete/', req.body.root, req.body.path);
 
   if (req.body.root != 'sandbox') {
-    return res.sendStatus(403);
+    next(httpError.makeError('usupported root ' + req.body.root, 403));
   }
 
   var fullPath = helpers.getDataPath(req.oauthHeader.token, req.body.path);

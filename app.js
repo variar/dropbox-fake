@@ -20,7 +20,7 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 
 
-if (!process.env.DISABLE_V1)
+if (process.env.DISABLE_V1 == "false")
 {
   var authorization = require('./routes/authorization');
   var files = require('./routes/files');
